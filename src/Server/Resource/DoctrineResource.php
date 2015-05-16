@@ -500,6 +500,11 @@ class DoctrineResource extends AbstractResourceListener implements
         }
             // @codeCoverageIgnoreEnd
 
+        $criteria = $this->getRouteParamsCriteria();
+
+        // Add criteria
+        $queryBuilder = $this->applyCriteria($queryBuilder, $criteria);
+
         // Run fetch all pre with query builder
         $event = new DoctrineResourceEvent(DoctrineResourceEvent::EVENT_FETCH_ALL_PRE, $this);
         $event->setQueryBuilder($queryBuilder);
@@ -666,7 +671,6 @@ class DoctrineResource extends AbstractResourceListener implements
         // Match identiy identifier name(s) with id(s)
         $ids = explode($this->getMultiKeyDelimiter(), $id);
         $keys = explode($this->getMultiKeyDelimiter(), $this->getEntityIdentifierName());
-        $criteria = array();
 
         if (count($ids) !== count($keys)) {
             return new ApiProblem(
@@ -678,10 +682,60 @@ class DoctrineResource extends AbstractResourceListener implements
             );
         }
 
+        // Build query
+        $queryProvider = $this->getQueryProvider($method);
+        $queryBuilder = $queryProvider->createQuery($this->getEvent(), $this->getEntityClass(), null);
+
+        if ($queryBuilder instanceof ApiProblem) {
+            // @codeCoverageIgnoreStart
+            return $queryBuilder;
+        }
+            // @codeCoverageIgnoreEnd
+
+        $criteria = $this->getRouteParamsCriteria();
+
         foreach ($keys as $index => $identifier) {
             $criteria[$identifier] = $ids[$index];
         }
 
+        // Add criteria
+        $queryBuilder = $this->applyCriteria($queryBuilder, $criteria);
+
+        try {
+            $entity = $queryBuilder->getQuery()->getSingleResult();
+        } catch (NoResultException $e) {
+            $entity = null;
+        }
+
+        if (!$entity) {
+            $entity = new ApiProblem(404, 'Entity was not found');
+        }
+
+        return $entity;
+    }
+
+    protected function applyCriteria($queryBuilder, array $criteria)
+    {
+        // Add criteria
+        foreach ($criteria as $key => $value) {
+            if ($queryBuilder instanceof \Doctrine\ODM\MongoDB\Query\Builder) {
+                $queryBuilder->field($key)->equals($value);
+            } else {
+                $parameterName = 'a' . md5(rand());
+                $queryBuilder->andwhere($queryBuilder->expr()->eq('row.' . $key, ":$parameterName"));
+                $queryBuilder->setParameter($parameterName, $value);
+            }
+        }
+        return $queryBuilder;
+    }
+
+    /**
+     * Get criteria from route params
+     * @return array
+     */
+    protected function getRouteParamsCriteria()
+    {
+        $criteria = array();
         $classMetaData = $this->getObjectManager()->getClassMetadata($this->getEntityClass());
         $routeMatch = $this->getEvent()->getRouteMatch();
         $associationMappings = $classMetaData->getAssociationNames();
@@ -695,9 +749,9 @@ class DoctrineResource extends AbstractResourceListener implements
         foreach ($routeParams as $routeMatchParam => $value) {
             $stripped = false;
             if ($this->getStripRouteParameterSuffix() === substr(
-                $routeMatchParam,
-                -1 * strlen($this->getStripRouteParameterSuffix())
-            )) {
+                    $routeMatchParam,
+                    -1 * strlen($this->getStripRouteParameterSuffix())
+                )) {
                 $routeMatchParam = substr($routeMatchParam, 0, -1 * strlen($this->getStripRouteParameterSuffix()));
                 $stripped = true;
             }
@@ -708,38 +762,6 @@ class DoctrineResource extends AbstractResourceListener implements
                 $criteria[$routeMatchParam] = $value;
             }
         }
-
-        // Build query
-        $queryProvider = $this->getQueryProvider($method);
-        $queryBuilder = $queryProvider->createQuery($this->getEvent(), $this->getEntityClass(), null);
-
-        if ($queryBuilder instanceof ApiProblem) {
-            // @codeCoverageIgnoreStart
-            return $queryBuilder;
-        }
-            // @codeCoverageIgnoreEnd
-
-        // Add criteria
-        foreach ($criteria as $key => $value) {
-            if ($queryBuilder instanceof \Doctrine\ODM\MongoDB\Query\Builder) {
-                $queryBuilder->field($key)->equals($value);
-            } else {
-                $parameterName = 'a' . md5(rand());
-                $queryBuilder->andwhere($queryBuilder->expr()->eq('row.' . $key, ":$parameterName"));
-                $queryBuilder->setParameter($parameterName, $value);
-            }
-        }
-
-        try {
-            $entity = $queryBuilder->getQuery()->getSingleResult();
-        } catch (NoResultException $e) {
-            $entity = null;
-        }
-
-        if (!$entity) {
-            $entity = new ApiProblem(404, 'Entity was not found');
-        }
-
-        return $entity;
+        return $criteria;
     }
 }
