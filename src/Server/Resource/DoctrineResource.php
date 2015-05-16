@@ -22,6 +22,7 @@ use Traversable;
 use Doctrine\ORM\NoResultException;
 use Doctrine\Common\Collections\ArrayCollection;
 use ZF\Apigility\Doctrine\Server\Query\CreateFilter\QueryCreateFilterInterface;
+use ZF\Apigility\Doctrine\Server\Query\Provider\CollectionTotalQueryProviderInterface;
 
 /**
  * Class DoctrineResource
@@ -525,12 +526,15 @@ class DoctrineResource extends AbstractResourceListener implements
             return $results->last();
         }
 
+        $resourceEvent = $this->getEvent();
+
+        $thisClass = $this;
         // Add event to set extra HAL data
         $entityClass = $this->getEntityClass();
         StaticEventManager::getInstance()->attach(
             'ZF\Rest\RestController',
             'getList.post',
-            function (EventInterface $e) use ($queryProvider, $entityClass, $data) {
+            function (EventInterface $e) use ($thisClass, $resourceEvent, $queryProvider, $entityClass, $data, $criteria) {
                 /** @var \ZF\Hal\Collection $halCollection */
                 $halCollection = $e->getParam('collection');
                 $collection = $halCollection->getCollection();
@@ -538,11 +542,19 @@ class DoctrineResource extends AbstractResourceListener implements
                 $collection->setItemCountPerPage($halCollection->getPageSize());
                 $collection->setCurrentPageNumber($halCollection->getPage());
 
+                if ($queryProvider instanceof CollectionTotalQueryProviderInterface) {
+                    $query = $queryProvider->createCollectionTotalQuery($resourceEvent, $entityClass, $data);
+                    $thisClass->applyCriteria($query, $criteria);
+                    $collectionTotal = (int) $query->getQuery()->getSingleScalarResult();
+                } else {
+                    $collectionTotal = $queryProvider->getCollectionTotal($entityClass);
+                }
+
                 $halCollection->setAttributes(
                     array(
                     'count' => $collection->getCurrentItemCount(),
                     'total' => $collection->getTotalItemCount(),
-                    'collectionTotal' => $queryProvider->getCollectionTotal($entityClass)
+                    'collectionTotal' => $collectionTotal
                     )
                 );
 
